@@ -3,5 +3,5 @@
 using CodeMap.Core;
 
 Console.WriteLine("Hello, World!");
-var processor = new Processor();
+var processor = new Processor("D:/Apps/Server");
 await processor.TextualDirectory("D:/Apps/Server");
