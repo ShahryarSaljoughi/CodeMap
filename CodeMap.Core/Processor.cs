@@ -1,38 +1,56 @@
 ﻿using CodeMap.Core.Exceptions;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace CodeMap.Core;
 
-public class Processor(string path)
+public class Processor(string path, GitIgnoreService gitIgnoreService, TreeBuilder treeBuilder)
 {
-    private string? _gitIgnorePath = Directory.GetFiles(path).FirstOrDefault(p => p.Contains(".gitignore"));
+    
     public async Task<string> TextualDirectory(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
             throw new DirectoryNotFound();
         }
-
-        var tree = await BuildTree(path);
-
-
-
-        var directories = await GetDirectories(path);
-        var files = GetFiles(path);
         
-        var result = string.Join(Environment.NewLine, directories);
-        return result;
+        var tree = await treeBuilder.BuildTree(path);
+        StringBuilder result = new StringBuilder();
+        result.AppendLine(GetOverallStructure(tree));
+        result.AppendLine(await GetFileContents(tree));
+        return result.ToString();
     }
 
-    private async Task<List<string>> ApplyGitIgnoreAsync(List<string> paths)
+    private async Task<string> GetFileContents(Node tree)
     {
-        if (string.IsNullOrWhiteSpace(_gitIgnorePath)) return paths;
-        var ignore = new Ignore.Ignore();
-        var rules = await File.ReadAllLinesAsync(_gitIgnorePath);
-        ignore.Add(rules);
-        paths = paths.Select(p => p.Replace(@"\", "/")).ToList();
-        return paths.Where(p => !ignore.IsIgnored(p)).ToList();
+        StringBuilder result = new StringBuilder();
+        foreach (var node in tree.Where(t => t.Type == NodeType.File))
+        {
+            var content = await File.ReadAllTextAsync(node.FullPath);
+            result.AppendLine(@$"
+
+{node.FullPath}:
+{content}
+");
+        }
+
+        return result.ToString();
+    }
+
+    private string GetOverallStructure(Node tree)
+    {
+        StringBuilder result = new StringBuilder();
+        PrintTree(tree);
+        return result.ToString();
+        void PrintTree(Node node, string indent = "-")
+        {
+            result.AppendLine($"{indent}{node.Name}");
+            foreach (var nodeChild in node.Children)
+            {
+                PrintTree(nodeChild, indent + "-");
+            }
+        }
     }
 
     private void NormalizeDirectoryPaths(List<string> paths)
@@ -52,14 +70,6 @@ public class Processor(string path)
         return new Regex(endsInSlashPattern).IsMatch(path);
     }
 
-    private string NormalizeDirectoryPath(string path)
-    {
-        path = path.Replace(@"\", "/");
-        if (!DoesEndInSlash(path))
-            path = $"{path}/";
-        return path;
-    }
-
     private async Task<List<string>> GetDirectories(string path)
     {
         var directories = new List<string>() { path };
@@ -72,10 +82,9 @@ public class Processor(string path)
 
         NormalizeDirectoryPaths(directories);
 
-        if (!string.IsNullOrEmpty(_gitIgnorePath))
-        {
-            directories = await ApplyGitIgnoreAsync(directories);
-        }
+        
+        directories = await gitIgnoreService.ApplyGitIgnoreAsync(directories);
+        
 
         return directories;
     }
@@ -85,7 +94,13 @@ public class Processor(string path)
         return Directory.GetFiles(path, "*", SearchOption.AllDirectories).ToList();
     }
 
-    private async Task<Node> BuildTree(string rootPath)
+
+}
+
+public class TreeBuilder(GitIgnoreService gitIgnoreService)
+{
+    
+    public async Task<Node> BuildTree(string rootPath)
     {
         var isFile = File.Exists(rootPath);
         rootPath = NormalizeDirectoryPath(rootPath);
@@ -102,7 +117,7 @@ public class Processor(string path)
     private async Task<List<Node>> BuildTreeChildren(string rootPath)
     {
         var files = Directory.GetFiles(rootPath).ToList();
-        files = await ApplyGitIgnoreAsync(files);
+        files = await gitIgnoreService.ApplyGitIgnoreAsync(files);
         var fileNodes = files.Select(f =>
         {
             var node = new Node()
@@ -114,7 +129,7 @@ public class Processor(string path)
             return node;
         });
         var directories = Directory.GetDirectories(rootPath).Select(NormalizeDirectoryPath).ToList();
-        directories = await ApplyGitIgnoreAsync(directories);
+        directories = await gitIgnoreService.ApplyGitIgnoreAsync(directories);
         var directoryNodes = directories.Select(d =>
         {
             var node = new Node()
@@ -125,11 +140,58 @@ public class Processor(string path)
             };
             return node;
         }).ToList();
-        
+
         foreach (var directoryNode in directoryNodes)
         {
             directoryNode.Children.AddRange(await BuildTreeChildren(directoryNode.FullPath));
         }
         return fileNodes.Concat(directoryNodes).ToList();
+    }
+
+    private string NormalizeDirectoryPath(string path)
+    {
+        path = path.Replace(@"\", "/");
+        if (!DoesEndInSlash(path))
+            path = $"{path}/";
+        return path;
+    }
+
+    bool DoesEndInSlash(string path)
+    {
+        var endsInSlashPattern = @"^.*/$";
+        return new Regex(endsInSlashPattern).IsMatch(path);
+    }
+
+}
+
+public class GitIgnoreService
+{
+    private string? GitIgnorePath { get; set; }
+    private Ignore.Ignore Ignore { get; set; }
+    private bool IsInitialized { get; set; }
+    public GitIgnoreService(string rootPath)
+    {
+        GitIgnorePath = Directory.GetFiles(rootPath).FirstOrDefault(p => p.Contains(".gitignore"));
+    }
+
+    private async Task Initialize()
+    {
+        Ignore = new Ignore.Ignore();
+        if (!string.IsNullOrWhiteSpace(GitIgnorePath))
+        {
+            var rules = await File.ReadAllLinesAsync(GitIgnorePath!);
+            Ignore.Add(rules);
+        }
+
+        IsInitialized = true;
+    }
+
+    public async Task<List<string>> ApplyGitIgnoreAsync(List<string> paths)
+    {
+        if (!IsInitialized) await Initialize();
+        if (string.IsNullOrWhiteSpace(GitIgnorePath)) return paths;
+        
+        paths = paths.Select(p => p.Replace(@"\", "/")).ToList();
+        return paths.Where(p => !Ignore.IsIgnored(p)).ToList();
     }
 }
