@@ -7,14 +7,14 @@ namespace CodeMap.Core;
 
 public class Processor(string path, GitIgnoreService gitIgnoreService, TreeBuilder treeBuilder)
 {
-    
-    public async Task<string> TextualDirectory(string path)
+
+    public async Task<string> TextualDirectory()
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
             throw new DirectoryNotFound();
         }
-        
+
         var tree = await treeBuilder.BuildTree(path);
         StringBuilder result = new StringBuilder();
         result.AppendLine(GetOverallStructure(tree));
@@ -82,9 +82,9 @@ public class Processor(string path, GitIgnoreService gitIgnoreService, TreeBuild
 
         NormalizeDirectoryPaths(directories);
 
-        
+
         directories = await gitIgnoreService.ApplyGitIgnoreAsync(directories);
-        
+
 
         return directories;
     }
@@ -99,7 +99,7 @@ public class Processor(string path, GitIgnoreService gitIgnoreService, TreeBuild
 
 public class TreeBuilder(GitIgnoreService gitIgnoreService)
 {
-    
+
     public async Task<Node> BuildTree(string rootPath)
     {
         var isFile = File.Exists(rootPath);
@@ -169,9 +169,14 @@ public class GitIgnoreService
     private string? GitIgnorePath { get; set; }
     private Ignore.Ignore Ignore { get; set; }
     private bool IsInitialized { get; set; }
-    public GitIgnoreService(string rootPath)
+    public GitIgnoreService(string ignoreFilePath)
     {
-        GitIgnorePath = Directory.GetFiles(rootPath).FirstOrDefault(p => p.Contains(".gitignore"));
+        GitIgnorePath =
+            File.Exists(ignoreFilePath) ?
+                ignoreFilePath
+                : Directory.Exists(ignoreFilePath) ?
+                    Directory.GetFiles(ignoreFilePath).FirstOrDefault(p => p.Contains(".gitignore"))
+                    : null;
     }
 
     private async Task Initialize()
@@ -190,7 +195,7 @@ public class GitIgnoreService
     {
         if (!IsInitialized) await Initialize();
         if (string.IsNullOrWhiteSpace(GitIgnorePath)) return paths;
-        
+
         paths = paths.Select(p => p.Replace(@"\", "/")).ToList();
         return paths.Where(p => !Ignore.IsIgnored(p)).ToList();
     }
