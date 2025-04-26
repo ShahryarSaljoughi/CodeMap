@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "CodeMap.Console": {
+      "commandName": "Project",
+      "commandLineArgs": ".",
+      "workingDirectory": "D:\\FamousGitHubRepos\\bitplatform\\src\\BlazorUI\\Bit.BlazorUI.Extras\\Components\\DataGrid"
+    }
+  }
+}
